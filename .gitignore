@@ -145,13 +145,13 @@ cython_debug/
 
 # Project-specific ignores
 # Ignore generated data, logs, and temporary folders
-/data/basic/
-/data/crawl-data/
-/data/NPI-Result-*/
-/backup/
-/temp/
+#/data/basic/
+#/data/crawl-data/
+#/data/NPI-Result-*/
+#/backup/
+#/temp/
 *.log
-missing_data_for_rerun.csv
+#missing_data_for_rerun.csv
 
 # OS-specific
 .DS_Store

@@ -175,85 +175,86 @@ def get_dentists_by_zipcode(zipcode):
     print(f"✅ ZIP code {zipcode} found {len(all_results)} dentists")
     return all_results
 
-async def fetch_missing_data_from_provider_view(npi):
+async def fetch_missing_data_from_provider_view(npi, semaphore):
     """
     Fetch missing dentist data from NPI provider view page using Playwright to get rendered HTML.
     """
-    url = f"https://npiregistry.cms.hhs.gov/provider-view/{npi}"
-    try:
-        logging.info(f"Fetching missing data for NPI {npi} from provider view...")
-        html_content = await fetch_rendered_html(url)
-        
-        if html_content:
-            soup = BeautifulSoup(html_content, 'html.parser')
+    async with semaphore:
+        url = f"https://npiregistry.cms.hhs.gov/provider-view/{npi}"
+        try:
+            logging.info(f"Fetching missing data for NPI {npi} from provider view...")
+            html_content = await fetch_rendered_html(url)
             
-            # --- Initialize data to extract ---
-            extracted_data = {
-                'phone': None,
-                'first_name': None,
-                'last_name': None,
-                'auth_name': None,
-                'auth_title': None,
-                'auth_phone': None
-            }
-
-            # --- Extract Practice Phone Number ---
-            phone_elements = soup.find_all(text=lambda text: (
-                text and
-                '(' in text and
-                ')' in text and
-                '-' in text and
-                text.parent.name not in ['style', 'script', 'head', 'title']
-            ))
-            for element in phone_elements:
-                # A simple check to avoid grabbing other numbers from the page
-                if len(element.strip()) >= 12:  # Typical phone format: (123) 456-7890
-                    extracted_data['phone'] = element.strip()
-                    break
-            
-            # --- Extract Name from Page Title ---
-            title_tag = soup.find('title')
-            if title_tag and '-' in title_tag.text:
-                name_part = title_tag.text.split('-')[0].strip()
-                name_parts = name_part.split()
-                if len(name_parts) >= 2:
-                    extracted_data['first_name'] = name_parts[0]
-                    extracted_data['last_name'] = ' '.join(name_parts[1:])
-            
-
-
-            #==========test=========
-            # find_all_tables_test(soup)
-            # save_soup_html_to_file(soup)
-            #==========test=========
-            # --- Extract Authorized Official Information from HTML table ---
-            # Use a regex to robustly find the header, ignoring whitespace
-            auth_official_header = soup.find('td', string=re.compile(r'\s*Authorized Official Information\s*'))
-            if auth_official_header and auth_official_header.find_next_sibling('td'):
-                auth_details_td = auth_official_header.find_next_sibling('td')
+            if html_content:
+                soup = BeautifulSoup(html_content, 'html.parser')
                 
-                # Use <br> as a separator and process each line individually for robustness
-                lines = auth_details_td.get_text(separator='\n').split('\n')
-                for line in lines:
-                    cleaned_line = line.strip()
-                    if cleaned_line.lower().startswith('name:'):
-                        # Take everything after "Name:"
-                        extracted_data['auth_name'] = cleaned_line[5:].strip()
-                    elif cleaned_line.lower().startswith('phone:'):
-                        # Take everything after "Phone:", which should be the number
-                        phone_val = cleaned_line[6:].strip()
-                        # Ensure it's only digits before assigning
-                        if phone_val.isdigit():
-                            extracted_data['auth_phone'] = phone_val
+                # --- Initialize data to extract ---
+                extracted_data = {
+                    'phone': None,
+                    'first_name': None,
+                    'last_name': None,
+                    'auth_name': None,
+                    'auth_title': None,
+                    'auth_phone': None
+                }
 
-            logging.info(f"NPI {npi}: Found data from scrape: {extracted_data}")
-            return npi, extracted_data
-        else:
-            logging.warning(f"Failed to fetch rendered HTML for NPI {npi}")
+                # --- Extract Practice Phone Number ---
+                phone_elements = soup.find_all(text=lambda text: (
+                    text and
+                    '(' in text and
+                    ')' in text and
+                    '-' in text and
+                    text.parent.name not in ['style', 'script', 'head', 'title']
+                ))
+                for element in phone_elements:
+                    # A simple check to avoid grabbing other numbers from the page
+                    if len(element.strip()) >= 12:  # Typical phone format: (123) 456-7890
+                        extracted_data['phone'] = element.strip()
+                        break
+                
+                # --- Extract Name from Page Title ---
+                title_tag = soup.find('title')
+                if title_tag and '-' in title_tag.text:
+                    name_part = title_tag.text.split('-')[0].strip()
+                    name_parts = name_part.split()
+                    if len(name_parts) >= 2:
+                        extracted_data['first_name'] = name_parts[0]
+                        extracted_data['last_name'] = ' '.join(name_parts[1:])
+                
+
+
+                #==========test=========
+                # find_all_tables_test(soup)
+                # save_soup_html_to_file(soup)
+                #==========test=========
+                # --- Extract Authorized Official Information from HTML table ---
+                # Use a regex to robustly find the header, ignoring whitespace
+                auth_official_header = soup.find('td', string=re.compile(r'\s*Authorized Official Information\s*'))
+                if auth_official_header and auth_official_header.find_next_sibling('td'):
+                    auth_details_td = auth_official_header.find_next_sibling('td')
+                    
+                    # Use <br> as a separator and process each line individually for robustness
+                    lines = auth_details_td.get_text(separator='\n').split('\n')
+                    for line in lines:
+                        cleaned_line = line.strip()
+                        if cleaned_line.lower().startswith('name:'):
+                            # Take everything after "Name:"
+                            extracted_data['auth_name'] = cleaned_line[5:].strip()
+                        elif cleaned_line.lower().startswith('phone:'):
+                            # Take everything after "Phone:", which should be the number
+                            phone_val = cleaned_line[6:].strip()
+                            # Ensure it's only digits before assigning
+                            if phone_val.isdigit():
+                                extracted_data['auth_phone'] = phone_val
+
+                logging.info(f"NPI {npi}: Found data from scrape: {extracted_data}")
+                return npi, extracted_data
+            else:
+                logging.warning(f"Failed to fetch rendered HTML for NPI {npi}")
+                return npi, None
+        except Exception as e:
+            logging.error(f"Error fetching NPI {npi} from provider view: {str(e)}")
             return npi, None
-    except Exception as e:
-        logging.error(f"Error fetching NPI {npi} from provider view: {str(e)}")
-        return npi, None
 
 #==========test=========
 # Define the Playwright HTML fetching function
@@ -337,7 +338,7 @@ run_folder = os.path.join(script_dir, '..', 'data', f'NPI-Result-{timestamp}')
 os.makedirs(run_folder, exist_ok=True)
 
 # Setup logging
-log_file = os.path.join(run_folder, 'crawler.log')
+log_file = os.path.join(run_folder, 'crawler-from-NPI.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -401,8 +402,11 @@ if all_dentists:
         print(f"\n🔄 Attempting to fetch missing data for {len(df_missing)} records from NPI provider view...")
         logging.info(f"Starting secondary fetch from NPI provider view for {len(df_missing)} records")
 
-        # Create tasks for all missing NPIs
-        tasks = [fetch_missing_data_from_provider_view(npi) for npi in df_missing['NPI']]
+        concurrency_limit = 50  # Set a reasonable concurrency limit
+        semaphore = asyncio.Semaphore(concurrency_limit)
+        
+        # Create tasks for all missing NPIs, controlled by the semaphore
+        tasks = [fetch_missing_data_from_provider_view(npi, semaphore) for npi in df_missing['NPI']]
         results = await asyncio.gather(*tasks)
 
         updated_count = 0
