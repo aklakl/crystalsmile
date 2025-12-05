@@ -1,0 +1,406 @@
+import requests
+import pandas as pd
+import time
+import os
+import logging
+from datetime import datetime
+import shutil
+from bs4 import BeautifulSoup
+
+
+# NPI API endpoint
+API_URL = "https://npiregistry.cms.hhs.gov/api/?version=2.1"
+#example=>https://npiregistry.cms.hhs.gov/provider-view/1063112373
+
+# Dentist taxonomy code (Taxonomy Code)
+# 122300000X = Dentist (General)
+# 1223G0001X = General Practice
+# You can use "Dentist" as description or use specific code
+TAXONOMY_DESC = "Dentist"
+
+
+# Connecticut ZIP codes list (to bypass quantity limits, we search by postal code by 5 digital)
+# If you want get other zipcode from follow links
+# ct-zip-to-town=>https://github.com/CT-Data-Collaborative/ct-zip-to-town?tab=readme-ov-file
+# Connecticut Open Data Portal=>https://data.ct.gov/dataset/Zip-Code/nhmp-cq6b/about_data
+# You can add more ZIP codes here
+# CT_ZIP_CODES = [
+#     "06101", "06102", "06103", "06104", "06105", "06106", "06107", "06108", "06109", "06110",  # Hartford area
+#     "06511", "06512", "06513", "06514", "06515", "06516", "06517", "06519", "06520",  # New Haven area
+#     "06901", "06902", "06903", "06904", "06905", "06906", "06907",  # Stamford area
+#     "06604", "06605", "06606", "06607", "06608", "06610",  # Bridgeport area
+#     "06702", "06704", "06705", "06706", "06708", "06710",  # Waterbury area
+#     "06850", "06851", "06853", "06854", "06855", "06856",  # Norwalk area
+#     "06810", "06811", "06813", "06814", "06816", "06817",  # Danbury area
+#     "06051", "06052", "06053",  # New Britain area
+#     "06107", "06110", "06117", "06119", "06133",  # West Hartford area
+#     "06830", "06831", "06836",  # Greenwich area
+#     "06514", "06517", "06518",  # Hamden area
+#     "06450", "06451",  # Meriden area
+#     "06040", "06042", "06045",  # Manchester area
+#     "06516",  # West Haven area
+#     "06460", "06461",  # Milford area
+#     "06614", "06615",  # Stratford area
+#     "06082", "06083",  # Enfield area
+#     "06457", "06459",  # Middletown area
+#     "06492", "06493", "06494",  # Wallingford area
+#     "06489",  # Southington area
+#     "06484",  # Shelton area
+#     "06340", "06355",  # Groton area
+#     "06790",  # Torrington area
+#     "06611",  # Trumbull area
+#     "06033", "06073",  # Glastonbury area
+#     "06010",  # Bristol area
+#     "06824", "06825"  # Fairfield area
+# ]
+
+#ALL CT 5 digital zip code
+# CT_ZIP_CODES = ["06810", "06516", "06478", "06070", "06756", "06782", "06461", "06249", "06374", "06387", "06812", "06001", "06786", "06708", "06811", "06410", "06379", "06339", "06269", "06606", "06784", "06019", "06085", "06851", "06033", "06752", "06488", "06518", "06763", "06790", "06024", "06512", "06279", "06373", "06470", "06854", "06856", "06438", "06472", "06473", "06770", "06405", "06604", "06804", "06880", "06840", "06106", "06479", "06793", "06460", "06706", "06492", "06514", "06517", "06226", "06231", "06277", "06897", "06903", "06614", "06091", "06020", "06791", "06057", "06469", "06457", "06513", "06032", "06084", "06255", "06040", "06787", "06511", "06704", "06333", "06608", "06468", "06089", "06254", "06820", "06830", "06114", "06710", "06105", "06360", "06384", "06051", "06095", "06088", "06096", "06081", "06160", "06118", "06389", "06357", "06234", "06278", "06260", "06264", "06610", "06877", "06906", "06798", "06751", "06758", "06475", "06243", "06481", "06332", "06525", "06712", "06524", "06350", "06248", "06282", "06262", "06807", "06801", "06120", "06103", "06878", "06905", "06883", "06111", "06074", "06783", "06779", "06426", "06420", "06418", "06401", "06359", "06331", "06247", "06377", "06013", "06082", "06607", "06053", "06052", "06023", "06060", "06021", "06058", "06108", "06061", "06480", "06498", "06412", "06414", "06471", "06519", "06510", "06371", "06403", "06334", "06029", "06071", "06266", "06320", "06890", "06896", "06853", "06107", "06090", "06073", "06042", "06442", "06409", "06416", "06702", "06263", "06112", "06489", "06235", "06907", "06615", "06117", "06016", "06092", "06467", "06067", "06477", "06450", "06762", "06437", "06901", "06850", "06335", "06376", "06043", "06110", "06451", "06605", "06484", "06010", "06035", "06447", "06444", "06002", "06026", "06059", "06441", "06455", "06483", "06515", "06705", "06340", "06353", "06232", "06855", "06066", "06870", "06119", "06716", "06037", "06256", "06027", "06062", "06109", "06022", "06422", "06413", "06417", "06456", "06380", "06336", "06365"]
+
+#Testing ZIP code
+CT_ZIP_CODES = [
+    "06511"  # New Haven
+]
+
+print(f"Total ZIP codes to crawl: {len(CT_ZIP_CODES)}")
+
+
+def is_running_in_colab():
+    """Detect if code is running in Google Colab environment"""
+    try:
+        from google.colab import drive
+        import sys
+        return 'google.colab' in sys.modules
+    except ImportError:
+        return False
+
+def get_dentists_by_zipcode(zipcode):
+    params = {
+        'postal_code': zipcode,
+        'taxonomy_description': TAXONOMY_DESC,
+        'limit': 200,  # Number per request
+        'pretty_print': 'off'
+    }
+    
+    all_results = []
+    skip = 0
+    
+    logging.info(f"Starting to crawl ZIP code: {zipcode}...")
+    print(f"🔍 Crawling ZIP code: {zipcode}...")
+    
+    while True:
+        params['skip'] = skip
+        try:
+            response = requests.get(API_URL, params=params, timeout=10)
+            data = response.json()
+            
+            if 'results' not in data:
+                break
+                
+            results = data['results']
+            if not results:
+                break
+                
+            for item in results:
+                basic = item.get('basic', {})
+                addresses = item.get('addresses', [])
+                
+                # Find primary practice location phone
+                phone = "N/A"
+                address_line = "N/A"
+                for addr in addresses:
+                    if addr.get('address_purpose') == 'LOCATION':
+                        phone = addr.get('telephone_number', "N/A")
+                        address_line = f"{addr.get('address_1', '')} {addr.get('city', '')}"
+                        break
+                
+                # Extract city and ZIP from address
+                city_name = "N/A"
+                zip_code = zipcode
+                for addr in addresses:
+                    if addr.get('address_purpose') == 'LOCATION':
+                        city_name = addr.get('city', 'N/A')
+                        zip_code = addr.get('postal_code', zipcode)
+                        break
+                
+                # Extract Authorized Official Information
+                authorized_official = "N/A"
+                authorized_officials = item.get('authorized_official', {})
+                if authorized_officials:
+                    first_name = authorized_officials.get('first_name', '')
+                    last_name = authorized_officials.get('last_name', '')
+                    title = authorized_officials.get('title_or_position', '')
+                    if first_name or last_name:
+                        authorized_official = f"{first_name} {last_name}".strip()
+                        if title:
+                            authorized_official += f" ({title})"
+                
+                # Extract Status
+                status = basic.get('status', 'N/A')
+                
+                dentist_info = {
+                    "NPI": item.get('number'),
+                    "First Name": basic.get('first_name'),
+                    "Last Name": basic.get('last_name'),
+                    "Credential": basic.get('credential', ''), # e.g. DDS, DMD
+                    "Organization Name": basic.get('organization_name', 'Individual'), # If clinic name
+                    "Phone": phone,
+                    "Address": address_line,
+                    "City": city_name,
+                    "ZIP Code": zip_code,
+                    "Taxonomy": TAXONOMY_DESC,
+                    "Enumeration Date": basic.get('enumeration_date', 'N/A'),
+                    "Last Updated": basic.get('last_updated', 'N/A'),
+                    "Certification Date": basic.get('certification_date', 'N/A'),
+                    "Authorized Official": authorized_official,
+                    "Status": status
+                }
+                all_results.append(dentist_info)
+            
+            # If returned results less than limit, it's the last page
+            if len(results) < params['limit']:
+                break
+                
+            skip += 200 # Pagination
+            time.sleep(0.5) # Polite delay
+            
+        except Exception as e:
+            logging.error(f"Error in ZIP code {zipcode}: {e}")
+            print(f"❌ Error in ZIP code {zipcode}: {e}")
+            break
+            
+    logging.info(f"ZIP code {zipcode} found {len(all_results)} dentists")
+    print(f"✅ ZIP code {zipcode} found {len(all_results)} dentists")
+    return all_results
+
+def fetch_missing_data_from_provider_view(npi):
+    """
+    Fetch missing dentist data from NPI provider view page
+    """
+    url = f"https://npiregistry.cms.hhs.gov/provider-view/{npi}"
+    try:
+        logging.info(f"Fetching missing data for NPI {npi} from provider view...")
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Extract phone number from the page
+            phone = "N/A"
+            phone_elements = soup.find_all(text=lambda text: text and '(' in text and ')' in text and '-' in text)
+            for element in phone_elements:
+                if len(element.strip()) >= 12:  # Phone format: (123) 456-7890
+                    phone = element.strip()
+                    break
+            
+            # Extract name from page title or header
+            first_name = "N/A"
+            last_name = "N/A"
+            title_tag = soup.find('title')
+            if title_tag:
+                title_text = title_tag.text
+                # Try to parse name from title
+                if '-' in title_text:
+                    name_part = title_text.split('-')[0].strip()
+                    name_parts = name_part.split()
+                    if len(name_parts) >= 2:
+                        first_name = name_parts[0]
+                        last_name = ' '.join(name_parts[1:])
+            
+            logging.info(f"NPI {npi}: Found phone={phone}, name={first_name} {last_name}")
+            return {
+                'phone': phone if phone != "N/A" else None,
+                'first_name': first_name if first_name != "N/A" else None,
+                'last_name': last_name if last_name != "N/A" else None
+            }
+        else:
+            logging.warning(f"Failed to fetch NPI {npi}: HTTP {response.status_code}")
+            return None
+    except Exception as e:
+        logging.error(f"Error fetching NPI {npi} from provider view: {e}")
+        return None
+
+# Main program
+# Create timestamped folder
+script_dir = os.path.dirname(os.path.abspath(__file__))
+timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+run_folder = os.path.join(script_dir, '..', 'data', f'NPI-Result-{timestamp}')
+os.makedirs(run_folder, exist_ok=True)
+
+# Setup logging
+log_file = os.path.join(run_folder, 'crawler.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+
+# Start crawling
+logging.info("Starting NPI crawler for Connecticut dentists")
+print("="*50)
+print("🚀 Starting NPI Crawler")
+print("="*50)
+
+all_dentists = []
+for zipcode in CT_ZIP_CODES:
+    zipcode_data = get_dentists_by_zipcode(zipcode)
+    all_dentists.extend(zipcode_data)
+
+# Save data
+if all_dentists:
+    df = pd.DataFrame(all_dentists)
+    # Remove duplicates (dentists may be registered in multiple ZIP codes)
+    df.drop_duplicates(subset=['NPI'], inplace=True)
+    
+    # Save main results
+    csv_filename = os.path.join(run_folder, "CT_Dentists_NPI_Data.csv")
+    df.to_csv(csv_filename, index=False, encoding='utf-8-sig')
+    
+    logging.info(f"Crawling completed! Total unique dentists/clinics: {len(df)}")
+    logging.info(f"Main CSV saved: {csv_filename}")
+    
+    # Check for missing data (empty Phone or missing Name)
+    missing_data = []
+    for idx, row in df.iterrows():
+        missing_fields = []
+        
+        if pd.isna(row['Phone']) or row['Phone'] == 'N/A' or row['Phone'] == '':
+            missing_fields.append('Phone')
+        
+        if pd.isna(row['First Name']) or row['First Name'] == '':
+            missing_fields.append('First Name')
+            
+        if pd.isna(row['Last Name']) or row['Last Name'] == '':
+            missing_fields.append('Last Name')
+        
+        if missing_fields:
+            missing_data.append({
+                'NPI': row['NPI'],
+                'Organization Name': row['Organization Name'],
+                'City': row['City'],
+                'Missing Fields': '; '.join(missing_fields)
+            })
+    
+    # Save missing data for rerun
+    if missing_data:
+        df_missing = pd.DataFrame(missing_data)
+        missing_csv = os.path.join(run_folder, 'missing_data_for_rerun.csv')
+        df_missing.to_csv(missing_csv, index=False, encoding='utf-8-sig')
+        logging.info(f"Found {len(missing_data)} records with missing data")
+        logging.info(f"Missing data CSV saved: {missing_csv}")
+        print(f"\n⚠️ {len(missing_data)} records with missing data, saved to missing_data_for_rerun.csv")
+        
+        # Try to fetch missing data from provider view
+        print(f"\n🔄 Attempting to fetch missing data from NPI provider view...")
+        logging.info("Starting secondary fetch from NPI provider view for missing data")
+        
+        updated_count = 0
+        for idx, missing_row in df_missing.iterrows():
+            npi = missing_row['NPI']
+            additional_data = fetch_missing_data_from_provider_view(npi)
+            
+            if additional_data:
+                # Update the main dataframe with fetched data
+                df_idx = df[df['NPI'] == npi].index
+                if len(df_idx) > 0:
+                    df_idx = df_idx[0]
+                    if additional_data.get('phone'):
+                        df.at[df_idx, 'Phone'] = additional_data['phone']
+                    if additional_data.get('first_name'):
+                        df.at[df_idx, 'First Name'] = additional_data['first_name']
+                    if additional_data.get('last_name'):
+                        df.at[df_idx, 'Last Name'] = additional_data['last_name']
+                    updated_count += 1
+            
+            time.sleep(1)  # Polite delay between requests
+        
+        # Re-save the updated CSV
+        if updated_count > 0:
+            df.to_csv(csv_filename, index=False, encoding='utf-8-sig')
+            logging.info(f"Updated {updated_count} records with additional data from provider view")
+            print(f"✅ Updated {updated_count} records with additional data")
+            
+            # Recalculate missing data after update
+            missing_data_after = []
+            for idx, row in df.iterrows():
+                missing_fields = []
+                
+                if pd.isna(row['Phone']) or row['Phone'] == 'N/A' or row['Phone'] == '':
+                    missing_fields.append('Phone')
+                
+                if pd.isna(row['First Name']) or row['First Name'] == '':
+                    missing_fields.append('First Name')
+                    
+                if pd.isna(row['Last Name']) or row['Last Name'] == '':
+                    missing_fields.append('Last Name')
+                
+                if missing_fields:
+                    missing_data_after.append({
+                        'NPI': row['NPI'],
+                        'Organization Name': row['Organization Name'],
+                        'City': row['City'],
+                        'Missing Fields': '; '.join(missing_fields)
+                    })
+            
+            if missing_data_after:
+                df_missing_final = pd.DataFrame(missing_data_after)
+                df_missing_final.to_csv(missing_csv, index=False, encoding='utf-8-sig')
+                logging.info(f"After retry: {len(missing_data_after)} records still have missing data")
+                print(f"⚠️ After retry: {len(missing_data_after)} records still have missing data")
+            else:
+                logging.info("All missing data has been filled!")
+                print("🎉 All missing data has been filled!")
+        else:
+            logging.info("No additional data found from provider view")
+            print("❌ No additional data found from provider view")
+    else:
+        logging.info("All records have complete data")
+        print("\n✅ All records have complete data")
+    
+    # Statistics
+    total_with_phone = df[df['Phone'] != 'N/A'].shape[0]
+    total_individuals = df[df['Organization Name'] == 'Individual'].shape[0]
+    
+    logging.info("="*50)
+    logging.info("STATISTICS:")
+    logging.info(f"Total records: {len(df)}")
+    logging.info(f"Records with phone: {total_with_phone}")
+    logging.info(f"Individual dentists: {total_individuals}")
+    logging.info(f"Organizations: {len(df) - total_individuals}")
+    logging.info("="*50)
+    
+    print(f"\n🎉 Crawling completed! Total unique dentists/clinics: {len(df)}")
+    print(f"📊 Statistics: {total_with_phone} with phone, {total_individuals} individual dentists, {len(df) - total_individuals} organizations")
+    print(f"Files saved to folder: {run_folder}")
+    
+    # Backup to Google Drive if running in Colab
+    if is_running_in_colab():
+        try:
+            from google.colab import drive
+            
+            # Check if drive is already mounted
+            if not os.path.exists('/content/drive'):
+                drive.mount('/content/drive')
+            
+            drive_base_path = '/content/drive/MyDrive/TMP-Share/crystalsmile/data/crawl-running-result'
+            os.makedirs(drive_base_path, exist_ok=True)
+            
+            drive_run_folder = os.path.join(drive_base_path, f'NPI-Result-{timestamp}')
+            shutil.copytree(run_folder, drive_run_folder, dirs_exist_ok=True)
+            
+            logging.info(f"Successfully backed up to Google Drive: {drive_run_folder}")
+            print(f"\n☁️ Successfully backed up to Google Drive: {drive_run_folder}")
+        except Exception as e:
+            logging.error(f"Failed to backup to Google Drive: {e}")
+            print(f"\n❌ Google Drive backup failed: {e}")
+    else:
+        logging.info("Not running in Colab environment, skipping Google Drive backup")
+        print("\n💻 Running locally, Google Drive backup skipped")
+    
+    logging.info("NPI Crawler Finished Successfully")
+else:
+    logging.warning("No data found")
+    print("No data found.")
